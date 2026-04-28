@@ -3,7 +3,9 @@
 import { Command } from "commander";
 import { initConfig } from "./config/init-config.js";
 import { loadConfig } from "./config/load-config.js";
+import { createContainsEdge } from "./core/create-contains-edge.js";
 import { createFileNode } from "./core/create-file-node.js";
+import { createProjectNode } from "./core/create-project-node.js";
 import type { KnowledgeGraph } from "./core/graph-types.js";
 import { scanFiles } from "./scanner/scan-files.js";
 
@@ -39,15 +41,27 @@ program
         exclude: config.exclude,
       });
 
+      const projectNode = createProjectNode(config.projectName);
+      const fileNodes = files.map(createFileNode);
+
       const graph: KnowledgeGraph = {
-        nodes: files.map(createFileNode),
-        edges: [],
+        nodes: [projectNode, ...fileNodes],
+        edges: fileNodes.map((fileNode) =>
+          createContainsEdge(projectNode, fileNode),
+        ),
       };
 
-      console.log(`Created ${graph.nodes.length} file nodes:\n`);
+      console.log(`Created ${graph.nodes.length} nodes.`);
+      console.log(`Created ${graph.edges.length} edges.\n`);
 
+      console.log("Nodes:");
       for (const node of graph.nodes) {
         console.log(JSON.stringify(node, null, 2));
+      }
+
+      console.log("\nEdges:");
+      for (const edge of graph.edges) {
+        console.log(JSON.stringify(edge, null, 2));
       }
     } catch (error) {
       if (error instanceof Error) {

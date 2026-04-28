@@ -1,13 +1,16 @@
 import { basename, extname } from "node:path";
 import type { GraphNode } from "./graph-types.js";
+import { normalizeGraphPath } from "./graph-id.js";
 
 export function createFileNode(filePath: string): GraphNode {
+  const normalizedPath = normalizeGraphPath(filePath);
+
   return {
-    id: `file:${normalizePath(filePath)}`,
+    id: `file:${normalizedPath}`,
     type: "file",
-    name: basename(filePath),
-    filePath: normalizePath(filePath),
-    language: detectLanguage(filePath),
+    name: basename(normalizedPath),
+    filePath: normalizedPath,
+    language: detectLanguage(normalizedPath),
   };
 }
 
@@ -26,8 +29,4 @@ function detectLanguage(filePath: string): string {
     default:
       return "unknown";
   }
-}
-
-function normalizePath(filePath: string): string {
-  return filePath.replaceAll("\\", "/");
 }
