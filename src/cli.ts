@@ -10,6 +10,7 @@ import type { KnowledgeGraph } from "./core/graph-types.js";
 import { parseTypescriptImports } from "./parser/parse-typescript-imports.js";
 import { parseTypescriptSymbols } from "./parser/parse-typescript-symbols.js";
 import { scanFiles } from "./scanner/scan-files.js";
+import { SqliteGraphStorage } from "./storage/sqlite-storage.js";
 
 const program = new Command();
 
@@ -35,6 +36,8 @@ program
   .command("index")
   .description("Index current project")
   .action(async () => {
+    let storage: SqliteGraphStorage | null = null;
+
     try {
       const config = loadConfig();
 
@@ -74,13 +77,19 @@ program
         ],
       };
 
-      console.log(`Created ${graph.nodes.length} nodes.`);
-      console.log(`Created ${graph.edges.length} edges.\n`);
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
 
-      console.log("Import edges:");
-      for (const edge of importEdges) {
-        console.log(JSON.stringify(edge, null, 2));
-      }
+      storage.saveGraph(graph);
+
+      console.log("Knowledge graph indexed successfully.");
+      console.log(`Storage: ${config.storage.path}`);
+      console.log(`Nodes: ${graph.nodes.length}`);
+      console.log(`Edges: ${graph.edges.length}`);
+      console.log(`Files: ${fileNodes.length}`);
+      console.log(`Symbols: ${symbolNodes.length}`);
+      console.log(`Imports: ${importEdges.length}`);
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
@@ -90,6 +99,8 @@ program
 
       console.error("Unknown error");
       process.exitCode = 1;
+    } finally {
+      storage?.close();
     }
   });
 
