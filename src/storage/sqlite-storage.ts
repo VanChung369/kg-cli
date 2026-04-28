@@ -358,7 +358,7 @@ export class SqliteGraphStorage {
         end_line as endLine,
         metadata
       FROM nodes
-      WHERE type IN ('class', 'function', 'method', 'interface', 'type')
+      WHERE type IN ('class', 'function', 'method', 'interface', 'type', 'callback')
         AND (
           name = ?
           OR json_extract(metadata, '$.qualifiedName') = ?

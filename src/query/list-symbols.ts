@@ -1,6 +1,13 @@
 import type { StoredGraphNode } from "../storage/sqlite-storage.js";
 
-const SYMBOL_TYPES = ["class", "function", "method", "interface", "type"];
+const SYMBOL_TYPES = [
+  "class",
+  "function",
+  "method",
+  "interface",
+  "type",
+  "callback",
+];
 
 export function getSymbolNodeTypes(): string[] {
   return SYMBOL_TYPES;

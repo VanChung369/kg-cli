@@ -7,7 +7,9 @@ export type NodeType =
   | "method"
   | "interface"
   | "type"
-  | "variable";
+  | "variable"
+  | "callback"
+  | "raw_call";
 
 export type EdgeType =
   | "CONTAINS"

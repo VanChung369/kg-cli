@@ -17,6 +17,8 @@ import { normalizeGraphPath } from "./core/graph-id.js";
 import { formatImports } from "./query/list-imports.js";
 import { formatDependents } from "./query/list-dependents.js";
 import { formatSymbolDetail } from "./query/show-symbol.js";
+import { parseTypescriptCalls } from "./parser/parse-typescript-calls.js";
+import { formatRawCalls } from "./query/list-raw-calls.js";
 
 const program = new Command();
 
@@ -68,18 +70,27 @@ program
         }),
       );
 
+      const callResults = files.map((filePath) =>
+        parseTypescriptCalls({
+          filePath,
+        }),
+      );
+
       const symbolNodes = symbolResults.flatMap((result) => result.nodes);
       const symbolEdges = symbolResults.flatMap((result) => result.edges);
       const importEdges = importResults.flatMap((result) => result.edges);
+      const rawCallNodes = callResults.flatMap((result) => result.nodes);
+      const callEdges = callResults.flatMap((result) => result.edges);
 
       const graph: KnowledgeGraph = {
-        nodes: [projectNode, ...fileNodes, ...symbolNodes],
+        nodes: [projectNode, ...fileNodes, ...symbolNodes, ...rawCallNodes],
         edges: [
           ...fileNodes.map((fileNode) =>
             createContainsEdge(projectNode, fileNode),
           ),
           ...symbolEdges,
           ...importEdges,
+          ...callEdges,
         ],
       };
 
@@ -96,6 +107,8 @@ program
       console.log(`Files: ${fileNodes.length}`);
       console.log(`Symbols: ${symbolNodes.length}`);
       console.log(`Imports: ${importEdges.length}`);
+      console.log(`Raw calls: ${rawCallNodes.length}`);
+      console.log(`Call edges: ${callEdges.length}`);
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
@@ -300,6 +313,36 @@ queryCommand
           symbols,
         }),
       );
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("raw-calls")
+  .description("List raw call expressions")
+  .action(() => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const rawCalls = storage.findNodesByTypes(["raw_call"]);
+
+      console.log(formatRawCalls(rawCalls));
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
