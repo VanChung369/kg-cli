@@ -38,6 +38,7 @@ import {
   getRouteContext,
   getRoutes,
 } from "./query/list-routes.js";
+import { startMcpServer } from "./mcp/server.js";
 
 const program = new Command();
 
@@ -179,6 +180,24 @@ program
           process.exit(0);
         });
       });
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("mcp")
+  .description("Start an MCP server over stdio")
+  .action(() => {
+    try {
+      startMcpServer();
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
