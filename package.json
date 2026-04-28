@@ -2,14 +2,26 @@
   "name": "kg-cli",
   "version": "0.1.0",
   "private": true,
+  "description": "Local knowledge graph CLI for TypeScript, NestJS, and Next.js projects",
   "type": "module",
   "bin": {
     "kg": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "prepack": "npm run build",
+    "pack:dry": "npm pack --dry-run",
+    "link:global": "npm link"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
