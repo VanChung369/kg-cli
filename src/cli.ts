@@ -37,6 +37,12 @@ import {
   formatModuleContext,
   getModuleContext,
 } from "./query/show-module.js";
+import {
+  formatRouteContext,
+  formatRoutes,
+  getRouteContext,
+  getRoutes,
+} from "./query/list-routes.js";
 
 const program = new Command();
 
@@ -754,6 +760,115 @@ queryCommand
     }
   });
 
+queryCommand
+  .command("routes")
+  .description("List framework routes")
+  .option(
+    "-k, --kind <kind>",
+    "Filter by route kind, for example page or api_route",
+  )
+  .action((options: { kind?: string }) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const routes = getRoutes(storage.findFiles()).filter((route) =>
+        options.kind ? route.kind === options.kind : true,
+      );
+
+      console.log(formatRoutes(routes));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("route")
+  .description("Show context for a framework route")
+  .argument("<route>", "Route path, for example /api/users")
+  .option("-k, --kind <kind>", "Route kind, for example page or api_route")
+  .action((routePath: string, options: { kind?: string }) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const normalizedRoutePath = normalizeRoutePath(routePath);
+      const matches = getRoutes(storage.findFiles()).filter(
+        (route) =>
+          route.route === normalizedRoutePath &&
+          (options.kind ? route.kind === options.kind : true),
+      );
+
+      if (matches.length === 0) {
+        const kindSuffix = options.kind ? ` (${options.kind})` : "";
+        console.error(
+          `Route not found in graph: ${normalizedRoutePath}${kindSuffix}`,
+        );
+        console.error("Run `kg index` first or check the route path.");
+        process.exitCode = 1;
+        return;
+      }
+
+      if (matches.length > 1) {
+        console.error(`Multiple route files found for: ${normalizedRoutePath}`);
+        for (const match of matches) {
+          console.error(
+            `- ${match.kind}: ${match.file.filePath ?? match.file.name}`,
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      const context = getRouteContext({
+        storage,
+        route: matches[0]!,
+      });
+
+      console.log(formatRouteContext(context));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
 program.addCommand(queryCommand);
 
 program.parse(process.argv);
+
+function normalizeRoutePath(routePath: string): string {
+  const normalized = routePath.trim();
+
+  if (normalized.length === 0 || normalized === "/") {
+    return "/";
+  }
+
+  return `/${normalized.replace(/^\/+|\/+$/g, "")}`;
+}

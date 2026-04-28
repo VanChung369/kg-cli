@@ -1,9 +1,11 @@
 import { basename, extname } from "node:path";
 import type { GraphNode } from "./graph-types.js";
 import { normalizeGraphPath } from "./graph-id.js";
+import { getNextjsRouteMetadata } from "./nextjs-routes.js";
 
 export function createFileNode(filePath: string): GraphNode {
   const normalizedPath = normalizeGraphPath(filePath);
+  const nextjsRoute = getNextjsRouteMetadata(normalizedPath);
 
   return {
     id: `file:${normalizedPath}`,
@@ -11,6 +13,11 @@ export function createFileNode(filePath: string): GraphNode {
     name: basename(normalizedPath),
     filePath: normalizedPath,
     language: detectLanguage(normalizedPath),
+    metadata: nextjsRoute
+      ? {
+          nextjs: nextjsRoute,
+        }
+      : undefined,
   };
 }
 
