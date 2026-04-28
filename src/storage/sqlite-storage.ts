@@ -12,6 +12,25 @@ type SqliteStorageOptions = {
   dbPath: string;
 };
 
+export type StoredGraphNode = {
+  id: string;
+  type: string;
+  name: string;
+  filePath: string | null;
+  language: string | null;
+  startLine: number | null;
+  endLine: number | null;
+  metadata: Record<string, unknown> | null;
+};
+
+export type StoredGraphEdge = {
+  id: string;
+  fromId: string;
+  toId: string;
+  type: string;
+  metadata: Record<string, unknown> | null;
+};
+
 export class SqliteGraphStorage {
   private readonly db: Database.Database;
 
@@ -148,6 +167,84 @@ export class SqliteGraphStorage {
       });
     }
   }
+
+  findNodesByTypes(types: string[]): StoredGraphNode[] {
+    if (types.length === 0) return [];
+
+    const placeholders = types.map(() => "?").join(", ");
+
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type IN (${placeholders})
+      ORDER BY file_path ASC, start_line ASC, name ASC
+      `,
+      )
+      .all(...types) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  findFiles(): StoredGraphNode[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type = 'file'
+      ORDER BY file_path ASC
+      `,
+      )
+      .all() as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  countOutgoingEdgesByType(fromId: string, type: string): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) as count
+      FROM edges
+      WHERE from_id = ? AND type = ?
+      `,
+      )
+      .get(fromId, type) as { count: number };
+
+    return row.count;
+  }
 }
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
@@ -158,4 +255,12 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
   }
 
   return Array.from(map.values());
+}
+
+function parseMetadata(value: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
