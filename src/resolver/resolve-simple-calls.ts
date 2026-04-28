@@ -17,41 +17,21 @@ export function resolveSimpleCalls(
   let skippedCount = 0;
 
   for (const item of rawCalls) {
-    if (!isSimpleIdentifierCall(item.rawCall)) {
-      skippedCount += 1;
+    const hintedEdge = resolveByQualifiedNameHint(storage, item);
+
+    if (hintedEdge) {
+      resolvedEdges.push(hintedEdge);
       continue;
     }
 
-    const matchedSymbols = storage.findSymbolsByExactName(item.rawCall);
+    const simpleEdge = resolveBySimpleIdentifier(storage, item);
 
-    if (matchedSymbols.length !== 1) {
-      skippedCount += 1;
+    if (simpleEdge) {
+      resolvedEdges.push(simpleEdge);
       continue;
     }
 
-    const targetSymbol = matchedSymbols[0]!;
-
-    if (item.callerId === targetSymbol.id) {
-      skippedCount += 1;
-      continue;
-    }
-
-    resolvedEdges.push({
-      id: createEdgeId({
-        fromId: item.callerId,
-        toId: targetSymbol.id,
-        type: "CALLS",
-      }),
-      fromId: item.callerId,
-      toId: targetSymbol.id,
-      type: "CALLS",
-      metadata: {
-        resolvedFrom: item.rawCall,
-        resolution: "simple_identifier",
-        line: item.line,
-        rawCallNodeId: item.rawCallNode.id,
-      },
-    });
+    skippedCount += 1;
   }
 
   storage.addEdges(resolvedEdges);
@@ -60,6 +40,93 @@ export function resolveSimpleCalls(
     resolvedEdges,
     resolvedCount: resolvedEdges.length,
     skippedCount,
+  };
+}
+
+function resolveByQualifiedNameHint(
+  storage: SqliteGraphStorage,
+  item: {
+    rawCallNode: {
+      id: string;
+      metadata: Record<string, unknown> | null;
+    };
+    callerId: string;
+    rawCall: string;
+    line: number | null;
+  },
+): GraphEdge | null {
+  const hint = item.rawCallNode.metadata?.resolvedQualifiedNameHint;
+
+  if (typeof hint !== "string" || hint.length === 0) {
+    return null;
+  }
+
+  const targetSymbol = storage.findSymbolByQualifiedName(hint);
+
+  if (!targetSymbol) return null;
+  if (item.callerId === targetSymbol.id) return null;
+
+  return {
+    id: createEdgeId({
+      fromId: item.callerId,
+      toId: targetSymbol.id,
+      type: "CALLS",
+    }),
+    fromId: item.callerId,
+    toId: targetSymbol.id,
+    type: "CALLS",
+    metadata: {
+      resolvedFrom: item.rawCall,
+      resolution: item.rawCallNode.metadata?.resolutionHint ?? "qualified_hint",
+      resolvedQualifiedName: hint,
+      line: item.line,
+      rawCallNodeId: item.rawCallNode.id,
+    },
+  };
+}
+
+function resolveBySimpleIdentifier(
+  storage: SqliteGraphStorage,
+  item: {
+    rawCallNode: {
+      id: string;
+    };
+    callerId: string;
+    rawCall: string;
+    line: number | null;
+  },
+): GraphEdge | null {
+  if (!isSimpleIdentifierCall(item.rawCall)) {
+    return null;
+  }
+
+  const matchedSymbols = storage.findSymbolsByExactName(item.rawCall);
+
+  if (matchedSymbols.length !== 1) {
+    return null;
+  }
+
+  const targetSymbol = matchedSymbols[0]!;
+
+  if (item.callerId === targetSymbol.id) {
+    return null;
+  }
+
+  return {
+    id: createEdgeId({
+      fromId: item.callerId,
+      toId: targetSymbol.id,
+      type: "CALLS",
+    }),
+    fromId: item.callerId,
+    toId: targetSymbol.id,
+    type: "CALLS",
+    metadata: {
+      resolvedFrom: item.rawCall,
+      resolution: "simple_identifier",
+      line: item.line,
+      rawCallNodeId: item.rawCallNode.id,
+    },
   };
 }
 

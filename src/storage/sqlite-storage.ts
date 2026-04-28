@@ -553,6 +553,39 @@ export class SqliteGraphStorage {
       metadata: row.metadata ? parseMetadata(row.metadata) : null,
     };
   }
+
+  findSymbolByQualifiedName(qualifiedName: string): StoredGraphNode | null {
+    const row = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type IN ('class', 'function', 'method', 'interface', 'type', 'callback')
+        AND json_extract(metadata, '$.qualifiedName') = ?
+      LIMIT 1
+      `,
+      )
+      .get(qualifiedName) as
+      | (Omit<StoredGraphNode, "metadata"> & {
+          metadata: string | null;
+        })
+      | undefined;
+
+    if (!row) return null;
+
+    return {
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    };
+  }
 }
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {

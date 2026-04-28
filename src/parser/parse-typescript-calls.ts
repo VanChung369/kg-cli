@@ -17,6 +17,7 @@ type ParseTypescriptCallsOptions = {
 type CurrentCallable = {
   symbolId: string;
   qualifiedName: string;
+  localVariableTypes: Map<string, string>;
 };
 
 export function parseTypescriptCalls(
@@ -49,6 +50,7 @@ export function parseTypescriptCalls(
         {
           symbolId: createSymbolId(filePath, functionName),
           qualifiedName: functionName,
+          localVariableTypes: new Map(),
         },
         () => {
           ts.forEachChild(node, visit);
@@ -72,6 +74,7 @@ export function parseTypescriptCalls(
             {
               symbolId: createSymbolId(filePath, qualifiedName),
               qualifiedName,
+              localVariableTypes: new Map(),
             },
             () => {
               ts.forEachChild(member, visit);
@@ -84,16 +87,16 @@ export function parseTypescriptCalls(
     }
 
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      const parentCallable = callableStack.at(-1);
+
       const callbackNode = createCallbackNode({
         filePath,
         sourceFile,
         node,
-        parentCallable: callableStack.at(-1),
+        parentCallable,
       });
 
       nodes.push(callbackNode);
-
-      const parentCallable = callableStack.at(-1);
 
       if (parentCallable) {
         edges.push({
@@ -129,6 +132,7 @@ export function parseTypescriptCalls(
         {
           symbolId: callbackNode.id,
           qualifiedName: getCallbackQualifiedName(callbackNode),
+          localVariableTypes: new Map(parentCallable?.localVariableTypes ?? []),
         },
         () => {
           ts.forEachChild(node, visit);
@@ -137,6 +141,9 @@ export function parseTypescriptCalls(
 
       return;
     }
+
+    collectLocalVariableType(node);
+    collectAssignmentVariableType(node);
 
     if (ts.isCallExpression(node)) {
       const currentCallable = callableStack.at(-1);
@@ -150,6 +157,10 @@ export function parseTypescriptCalls(
           );
 
           const lineNumber = line + 1;
+          const resolutionHint = getResolutionHintFromRawCall(
+            rawCall,
+            currentCallable.localVariableTypes,
+          );
 
           const rawCallNodeId = createRawCallNodeId({
             filePath,
@@ -168,6 +179,7 @@ export function parseTypescriptCalls(
             metadata: {
               rawCall,
               callerQualifiedName: currentCallable.qualifiedName,
+              ...resolutionHint,
             },
           };
 
@@ -185,6 +197,7 @@ export function parseTypescriptCalls(
             metadata: {
               rawCall,
               line: lineNumber,
+              ...resolutionHint,
             },
           });
         }
@@ -210,6 +223,85 @@ export function parseTypescriptCalls(
       callableStack.pop();
     }
   }
+
+  function collectLocalVariableType(node: ts.Node) {
+    const currentCallable = callableStack.at(-1);
+    if (!currentCallable) return;
+
+    if (!ts.isVariableDeclaration(node)) return;
+    if (!ts.isIdentifier(node.name)) return;
+    if (!node.initializer) return;
+
+    const variableName = node.name.text;
+    const typeName = inferTypeFromInitializer(node.initializer, sourceFile);
+
+    if (!typeName) return;
+
+    currentCallable.localVariableTypes.set(variableName, typeName);
+  }
+
+  function collectAssignmentVariableType(node: ts.Node) {
+    const currentCallable = callableStack.at(-1);
+    if (!currentCallable) return;
+
+    if (!ts.isBinaryExpression(node)) return;
+    if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+    if (!ts.isIdentifier(node.left)) return;
+
+    const variableName = node.left.text;
+    const typeName = inferTypeFromInitializer(node.right, sourceFile);
+
+    if (!typeName) return;
+
+    currentCallable.localVariableTypes.set(variableName, typeName);
+  }
+}
+
+function inferTypeFromInitializer(
+  initializer: ts.Expression,
+  sourceFile: ts.SourceFile,
+): string | null {
+  if (ts.isNewExpression(initializer)) {
+    const expression = initializer.expression;
+
+    if (ts.isIdentifier(expression)) {
+      return expression.text;
+    }
+
+    if (ts.isPropertyAccessExpression(expression)) {
+      return expression.name.text;
+    }
+
+    return expression.getText(sourceFile);
+  }
+
+  return null;
+}
+
+function getResolutionHintFromRawCall(
+  rawCall: string,
+  localVariableTypes: Map<string, string>,
+): Record<string, unknown> {
+  const parts = rawCall.split(".");
+
+  if (parts.length < 2) return {};
+
+  const receiver = parts[0];
+  const methodName = parts.at(-1);
+
+  if (!receiver || !methodName) return {};
+
+  const receiverType = localVariableTypes.get(receiver);
+
+  if (!receiverType) return {};
+
+  return {
+    receiver,
+    receiverType,
+    methodName,
+    resolvedQualifiedNameHint: `${receiverType}.${methodName}`,
+    resolutionHint: "local_new_expression",
+  };
 }
 
 function createCallbackNode(params: {
@@ -260,6 +352,7 @@ function createCallbackName(
     const callName = getShortCallName(parent.expression, sourceFile);
     return `<callback:${callName}:${line}>`;
   }
+
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
     return `<callback:${parent.name.text}:${line}>`;
   }
@@ -274,19 +367,19 @@ function createCallbackName(
   return `<callback:${line}>`;
 }
 
-function createCallbackNodeId(params: {
-  filePath: string;
-  name: string;
-  line: number;
-}): string {
-  const safeName = params.name
-    .replaceAll("\\", "/")
-    .replaceAll(/\s+/g, "")
-    .replaceAll(":", "_")
-    .replaceAll("<", "")
-    .replaceAll(">", "");
+function getShortCallName(
+  expression: ts.Expression,
+  sourceFile: ts.SourceFile,
+): string {
+  if (ts.isPropertyAccessExpression(expression)) {
+    return expression.name.text;
+  }
 
-  return `symbol:${params.filePath}#${safeName}:${params.line}`;
+  if (ts.isIdentifier(expression)) {
+    return expression.text;
+  }
+
+  return expression.getText(sourceFile);
 }
 
 function getCallbackQualifiedName(node: GraphNode): string {
@@ -350,17 +443,17 @@ function getPropertyName(name: ts.PropertyName): string | null {
   return null;
 }
 
-function getShortCallName(
-  expression: ts.Expression,
-  sourceFile: ts.SourceFile,
-): string {
-  if (ts.isPropertyAccessExpression(expression)) {
-    return expression.name.text;
-  }
+function createCallbackNodeId(params: {
+  filePath: string;
+  name: string;
+  line: number;
+}): string {
+  const safeName = params.name
+    .replaceAll("\\", "/")
+    .replaceAll(/\s+/g, "")
+    .replaceAll(":", "_")
+    .replaceAll("<", "")
+    .replaceAll(">", "");
 
-  if (ts.isIdentifier(expression)) {
-    return expression.text;
-  }
-
-  return expression.getText(sourceFile);
+  return `symbol:${params.filePath}#${safeName}:${params.line}`;
 }

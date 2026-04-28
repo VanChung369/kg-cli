@@ -23,6 +23,16 @@ export function formatRawCalls(rawCalls: StoredGraphNode[]): string {
       lines.push(`  caller: ${callerQualifiedName}`);
     }
 
+    const resolvedQualifiedNameHint = call.metadata?.resolvedQualifiedNameHint;
+    if (typeof resolvedQualifiedNameHint === "string") {
+      lines.push(`  hint: ${resolvedQualifiedNameHint}`);
+    }
+
+    const resolutionHint = call.metadata?.resolutionHint;
+    if (typeof resolutionHint === "string") {
+      lines.push(`  resolutionHint: ${resolutionHint}`);
+    }
+
     lines.push("");
   }
 
