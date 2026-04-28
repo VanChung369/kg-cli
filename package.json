@@ -12,11 +12,13 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "commander": "^14.0.0",
     "fast-glob": "^3.3.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
