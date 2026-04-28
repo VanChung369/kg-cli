@@ -8,6 +8,7 @@ import { createFileNode } from "./core/create-file-node.js";
 import { createProjectNode } from "./core/create-project-node.js";
 import type { KnowledgeGraph } from "./core/graph-types.js";
 import { parseTypescriptImports } from "./parser/parse-typescript-imports.js";
+import { parseNestjsSemantics } from "./parser/parse-nestjs-semantics.js";
 import { parseTypescriptSymbols } from "./parser/parse-typescript-symbols.js";
 import { formatSymbols, getSymbolNodeTypes } from "./query/list-symbols.js";
 import { scanFiles } from "./scanner/scan-files.js";
@@ -32,6 +33,10 @@ import {
   analyzeFileImpact,
   formatFileImpact,
 } from "./query/analyze-file-impact.js";
+import {
+  formatModuleContext,
+  getModuleContext,
+} from "./query/show-module.js";
 
 const program = new Command();
 
@@ -89,11 +94,19 @@ program
         }),
       );
 
+      const nestjsResults = files.map((filePath) =>
+        parseNestjsSemantics({
+          filePath,
+          allFiles: files,
+        }),
+      );
+
       const symbolNodes = symbolResults.flatMap((result) => result.nodes);
       const symbolEdges = symbolResults.flatMap((result) => result.edges);
       const importEdges = importResults.flatMap((result) => result.edges);
       const rawCallNodes = callResults.flatMap((result) => result.nodes);
       const callEdges = callResults.flatMap((result) => result.edges);
+      const nestjsEdges = nestjsResults.flatMap((result) => result.edges);
 
       const graph: KnowledgeGraph = {
         nodes: [projectNode, ...fileNodes, ...symbolNodes, ...rawCallNodes],
@@ -104,6 +117,7 @@ program
           ...symbolEdges,
           ...importEdges,
           ...callEdges,
+          ...nestjsEdges,
         ],
       };
 
@@ -124,6 +138,7 @@ program
       console.log(`Imports: ${importEdges.length}`);
       console.log(`Raw calls: ${rawCallNodes.length}`);
       console.log(`Call edges: ${callEdges.length}`);
+      console.log(`NestJS semantic edges: ${nestjsEdges.length}`);
       console.log(
         `Resolved simple calls: ${simpleCallResolution.resolvedCount}`,
       );
@@ -668,6 +683,63 @@ queryCommand
       });
 
       console.log(formatFileImpact(impact));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("module")
+  .description("Show NestJS module context")
+  .argument("<module>", "Module class name or qualified name")
+  .action((moduleName: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const matches = storage.findSymbolsByName(moduleName);
+      const result = findUniqueSymbolFromMatches(matches);
+
+      if (!result.ok) {
+        console.log(`Module symbol not found: ${moduleName}`);
+
+        if (result.reason === "ambiguous") {
+          console.log("");
+          console.log("Multiple matches found. Use a qualified name:");
+          for (const match of result.matches) {
+            const qualifiedName =
+              typeof match.metadata?.qualifiedName === "string"
+                ? match.metadata.qualifiedName
+                : match.name;
+
+            console.log(`- ${qualifiedName} (${match.filePath ?? "unknown"})`);
+          }
+        }
+
+        process.exitCode = 1;
+        return;
+      }
+
+      const context = getModuleContext({
+        storage,
+        module: result.symbol,
+      });
+
+      console.log(formatModuleContext(context));
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);

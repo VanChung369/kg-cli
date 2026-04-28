@@ -74,7 +74,7 @@ export function parseTypescriptImports(
   };
 }
 
-function resolveImportPath(params: {
+export function resolveImportPath(params: {
   cwd: string;
   fromFilePath: string;
   importPath: string;

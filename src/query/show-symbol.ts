@@ -54,6 +54,30 @@ function formatSingleSymbol(symbol: StoredGraphNode): string {
     lines.push(`qualifiedName: ${qualifiedName}`);
   }
 
+  const decorators = symbol.metadata?.decorators;
+  if (Array.isArray(decorators) && decorators.length > 0) {
+    lines.push(`decorators: ${decorators.join(", ")}`);
+  }
+
+  const nestjs = symbol.metadata?.nestjs;
+  if (isRecord(nestjs)) {
+    const kind = nestjs.kind;
+    if (typeof kind === "string") {
+      lines.push(`nestjs.kind: ${kind}`);
+    }
+
+    const route = nestjs.route;
+    if (typeof route === "string") {
+      const method = typeof nestjs.method === "string" ? nestjs.method : "";
+      lines.push(`nestjs.route: ${method} ${route}`.trim());
+    }
+
+    const path = nestjs.path;
+    if (typeof path === "string" && typeof route !== "string") {
+      lines.push(`nestjs.path: ${path}`);
+    }
+  }
+
   lines.push(`id: ${symbol.id}`);
 
   return lines.join("\n");
@@ -85,4 +109,8 @@ function formatFileLocation(symbol: StoredGraphNode): string {
   }
 
   return filePath;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -8,6 +8,8 @@ export type SymbolContextResult = {
   symbol: StoredGraphNode;
   callers: StoredGraphNode[];
   callees: StoredGraphNode[];
+  injections: StoredGraphNode[];
+  injectedBy: StoredGraphNode[];
   imports: StoredGraphNode[];
   affectedFiles: string[];
 };
@@ -24,6 +26,16 @@ export function getSymbolContext(params: {
   const callees = params.storage
     .findOutgoingNodesByEdgeType(params.symbol.id, "CALLS")
     .filter((node) => node.type !== "raw_call");
+
+  const injections = params.storage.findOutgoingNodesByEdgeType(
+    params.symbol.id,
+    "INJECTS",
+  );
+
+  const injectedBy = params.storage.findIncomingNodesByEdgeType(
+    params.symbol.id,
+    "INJECTS",
+  );
 
   const sourceFile = params.symbol.filePath
     ? params.storage.findFileByPath(params.symbol.filePath)
@@ -43,6 +55,8 @@ export function getSymbolContext(params: {
     symbol: params.symbol,
     callers,
     callees,
+    injections,
+    injectedBy,
     imports,
     affectedFiles: impact.affectedFiles,
   };
@@ -64,6 +78,14 @@ export function formatSymbolContext(result: SymbolContextResult): string {
 
   lines.push("Callees:");
   pushSymbolList(lines, result.callees);
+  lines.push("");
+
+  lines.push("Injections:");
+  pushSymbolList(lines, result.injections);
+  lines.push("");
+
+  lines.push("Injected by:");
+  pushSymbolList(lines, result.injectedBy);
   lines.push("");
 
   lines.push("Imports:");

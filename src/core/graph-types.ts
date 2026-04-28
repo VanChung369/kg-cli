@@ -18,6 +18,7 @@ export type EdgeType =
   | "DECLARES"
   | "CALLS"
   | "DEPENDS_ON"
+  | "PROVIDES"
   | "EXTENDS"
   | "IMPLEMENTS"
   | "INJECTS";
