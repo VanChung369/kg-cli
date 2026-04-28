@@ -245,6 +245,139 @@ export class SqliteGraphStorage {
 
     return row.count;
   }
+
+  findOutgoingNodesByEdgeType(fromId: string, type: string): StoredGraphNode[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        n.id,
+        n.type,
+        n.name,
+        n.file_path as filePath,
+        n.language,
+        n.start_line as startLine,
+        n.end_line as endLine,
+        n.metadata
+      FROM edges e
+      JOIN nodes n ON n.id = e.to_id
+      WHERE e.from_id = ? AND e.type = ?
+      ORDER BY n.file_path ASC, n.start_line ASC, n.name ASC
+      `,
+      )
+      .all(fromId, type) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  findFileByPath(filePath: string): StoredGraphNode | null {
+    const normalizedPath = filePath.replaceAll("\\", "/");
+
+    const row = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type = 'file' AND file_path = ?
+      LIMIT 1
+      `,
+      )
+      .get(normalizedPath) as
+      | (Omit<StoredGraphNode, "metadata"> & {
+          metadata: string | null;
+        })
+      | undefined;
+
+    if (!row) return null;
+
+    return {
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    };
+  }
+
+  findIncomingNodesByEdgeType(toId: string, type: string): StoredGraphNode[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        n.id,
+        n.type,
+        n.name,
+        n.file_path as filePath,
+        n.language,
+        n.start_line as startLine,
+        n.end_line as endLine,
+        n.metadata
+      FROM edges e
+      JOIN nodes n ON n.id = e.from_id
+      WHERE e.to_id = ? AND e.type = ?
+      ORDER BY n.file_path ASC, n.start_line ASC, n.name ASC
+      `,
+      )
+      .all(toId, type) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  findSymbolsByName(name: string): StoredGraphNode[] {
+    const normalizedName = name.trim();
+
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type IN ('class', 'function', 'method', 'interface', 'type')
+        AND (
+          name = ?
+          OR json_extract(metadata, '$.qualifiedName') = ?
+          OR json_extract(metadata, '$.qualifiedName') LIKE ?
+        )
+      ORDER BY file_path ASC, start_line ASC, name ASC
+      `,
+      )
+      .all(normalizedName, normalizedName, `%${normalizedName}%`) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
 }
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {

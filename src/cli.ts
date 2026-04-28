@@ -13,6 +13,10 @@ import { formatSymbols, getSymbolNodeTypes } from "./query/list-symbols.js";
 import { scanFiles } from "./scanner/scan-files.js";
 import { SqliteGraphStorage } from "./storage/sqlite-storage.js";
 import { formatFiles, type FileSummary } from "./query/list-files.js";
+import { normalizeGraphPath } from "./core/graph-id.js";
+import { formatImports } from "./query/list-imports.js";
+import { formatDependents } from "./query/list-dependents.js";
+import { formatSymbolDetail } from "./query/show-symbol.js";
 
 const program = new Command();
 
@@ -162,6 +166,140 @@ queryCommand
       }));
 
       console.log(formatFiles(summaries));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("imports")
+  .description("List files imported by a file")
+  .argument("<file>", "Source file path")
+  .action((file: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const normalizedFilePath = normalizeGraphPath(file);
+      const sourceFile = storage.findFileByPath(normalizedFilePath);
+
+      if (!sourceFile) {
+        console.error(`File not found in graph: ${normalizedFilePath}`);
+        console.error("Run `kg index` first or check the file path.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const imports = storage.findOutgoingNodesByEdgeType(
+        sourceFile.id,
+        "IMPORTS",
+      );
+
+      console.log(
+        formatImports({
+          sourceFilePath: normalizedFilePath,
+          imports,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("dependents")
+  .description("List files that import a file")
+  .argument("<file>", "Target file path")
+  .action((file: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const normalizedFilePath = normalizeGraphPath(file);
+      const targetFile = storage.findFileByPath(normalizedFilePath);
+
+      if (!targetFile) {
+        console.error(`File not found in graph: ${normalizedFilePath}`);
+        console.error("Run `kg index` first or check the file path.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const dependents = storage.findIncomingNodesByEdgeType(
+        targetFile.id,
+        "IMPORTS",
+      );
+
+      console.log(
+        formatDependents({
+          targetFilePath: normalizedFilePath,
+          dependents,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("symbol")
+  .description("Show symbol detail by name")
+  .argument("<name>", "Symbol name or qualified name")
+  .action((name: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const symbols = storage.findSymbolsByName(name);
+
+      console.log(
+        formatSymbolDetail({
+          query: name,
+          symbols,
+        }),
+      );
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
