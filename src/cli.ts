@@ -2,6 +2,8 @@
 
 import { Command } from "commander";
 import { initConfig } from "./config/init-config.js";
+import { loadConfig } from "./config/load-config.js";
+import { scanFiles } from "./scanner/scan-files.js";
 
 const program = new Command();
 
@@ -26,8 +28,30 @@ program
 program
   .command("index")
   .description("Index current project")
-  .action(() => {
-    console.log("Indexing project...");
+  .action(async () => {
+    try {
+      const config = loadConfig();
+
+      const files = await scanFiles({
+        include: config.include,
+        exclude: config.exclude,
+      });
+
+      console.log(`Found ${files.length} source files:\n`);
+
+      for (const file of files) {
+        console.log(`- ${file}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    }
   });
 
 program.parse(process.argv);

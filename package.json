@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "commander": "^14.0.0",
+    "fast-glob": "^3.3.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {
