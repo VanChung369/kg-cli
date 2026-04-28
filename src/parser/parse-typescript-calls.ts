@@ -18,6 +18,7 @@ type CurrentCallable = {
   symbolId: string;
   qualifiedName: string;
   localVariableTypes: Map<string, string>;
+  thisPropertyTypes: Map<string, string>;
 };
 
 export function parseTypescriptCalls(
@@ -51,6 +52,7 @@ export function parseTypescriptCalls(
           symbolId: createSymbolId(filePath, functionName),
           qualifiedName: functionName,
           localVariableTypes: new Map(),
+          thisPropertyTypes: new Map(),
         },
         () => {
           ts.forEachChild(node, visit);
@@ -62,6 +64,7 @@ export function parseTypescriptCalls(
 
     if (ts.isClassDeclaration(node) && node.name) {
       const className = node.name.text;
+      const thisPropertyTypes = extractConstructorInjectedProperties(node);
 
       for (const member of node.members) {
         if (ts.isMethodDeclaration(member) && member.name) {
@@ -75,6 +78,7 @@ export function parseTypescriptCalls(
               symbolId: createSymbolId(filePath, qualifiedName),
               qualifiedName,
               localVariableTypes: new Map(),
+              thisPropertyTypes: new Map(thisPropertyTypes),
             },
             () => {
               ts.forEachChild(member, visit);
@@ -133,6 +137,7 @@ export function parseTypescriptCalls(
           symbolId: callbackNode.id,
           qualifiedName: getCallbackQualifiedName(callbackNode),
           localVariableTypes: new Map(parentCallable?.localVariableTypes ?? []),
+          thisPropertyTypes: new Map(parentCallable?.thisPropertyTypes ?? []),
         },
         () => {
           ts.forEachChild(node, visit);
@@ -160,6 +165,7 @@ export function parseTypescriptCalls(
           const resolutionHint = getResolutionHintFromRawCall(
             rawCall,
             currentCallable.localVariableTypes,
+            currentCallable.thisPropertyTypes,
           );
 
           const rawCallNodeId = createRawCallNodeId({
@@ -230,10 +236,13 @@ export function parseTypescriptCalls(
 
     if (!ts.isVariableDeclaration(node)) return;
     if (!ts.isIdentifier(node.name)) return;
-    if (!node.initializer) return;
 
     const variableName = node.name.text;
-    const typeName = inferTypeFromInitializer(node.initializer, sourceFile);
+    const typeName =
+      getTypeNameFromTypeNode(node.type) ??
+      (node.initializer
+        ? inferTypeFromInitializer(node.initializer, sourceFile)
+        : null);
 
     if (!typeName) return;
 
@@ -275,16 +284,178 @@ function inferTypeFromInitializer(
     return expression.getText(sourceFile);
   }
 
+  if (
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer)
+  ) {
+    return getTypeNameFromTypeNode(initializer.type);
+  }
+
   return null;
+}
+
+function extractConstructorInjectedProperties(
+  node: ts.ClassDeclaration,
+): Map<string, string> {
+  const thisPropertyTypes = new Map<string, string>();
+
+  for (const member of node.members) {
+    if (ts.isPropertyDeclaration(member) && member.name) {
+      const propertyName = getPropertyName(member.name);
+      if (!propertyName) continue;
+
+      const typeName =
+        getTypeNameFromTypeNode(member.type) ??
+        (member.initializer
+          ? inferTypeFromInitializer(member.initializer, member.getSourceFile())
+          : null);
+
+      if (typeName) {
+        thisPropertyTypes.set(propertyName, typeName);
+      }
+    }
+
+    if (!ts.isConstructorDeclaration(member)) continue;
+
+    const constructorParameterTypes = new Map<string, string>();
+
+    for (const parameter of member.parameters) {
+      if (!ts.isIdentifier(parameter.name)) continue;
+
+      const parameterName = parameter.name.text;
+      const typeName = getTypeNameFromTypeNode(parameter.type);
+
+      if (!typeName) continue;
+
+      constructorParameterTypes.set(parameterName, typeName);
+
+      if (isParameterProperty(parameter)) {
+        thisPropertyTypes.set(parameterName, typeName);
+      }
+    }
+
+    if (member.body) {
+      collectConstructorAssignments({
+        node: member.body,
+        constructorParameterTypes,
+        thisPropertyTypes,
+      });
+    }
+  }
+
+  return thisPropertyTypes;
+}
+
+function collectConstructorAssignments(params: {
+  node: ts.Node;
+  constructorParameterTypes: Map<string, string>;
+  thisPropertyTypes: Map<string, string>;
+}) {
+  if (ts.isBinaryExpression(params.node)) {
+    const { left, right, operatorToken } = params.node;
+
+    if (
+      operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(left) &&
+      left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+      ts.isIdentifier(right)
+    ) {
+      const typeName = params.constructorParameterTypes.get(right.text);
+
+      if (typeName) {
+        params.thisPropertyTypes.set(left.name.text, typeName);
+      }
+    }
+  }
+
+  ts.forEachChild(params.node, (child) =>
+    collectConstructorAssignments({
+      node: child,
+      constructorParameterTypes: params.constructorParameterTypes,
+      thisPropertyTypes: params.thisPropertyTypes,
+    }),
+  );
+}
+
+function isParameterProperty(parameter: ts.ParameterDeclaration): boolean {
+  const modifiers = ts.canHaveModifiers(parameter)
+    ? ts.getModifiers(parameter)
+    : undefined;
+
+  return Boolean(
+    modifiers?.some((modifier) =>
+      [
+        ts.SyntaxKind.PublicKeyword,
+        ts.SyntaxKind.PrivateKeyword,
+        ts.SyntaxKind.ProtectedKeyword,
+        ts.SyntaxKind.ReadonlyKeyword,
+      ].includes(modifier.kind),
+    ),
+  );
+}
+
+function getTypeNameFromTypeNode(
+  typeNode: ts.TypeNode | undefined,
+): string | null {
+  if (!typeNode) return null;
+
+  if (ts.isTypeReferenceNode(typeNode)) {
+    return getEntityNameText(typeNode.typeName);
+  }
+
+  if (ts.isUnionTypeNode(typeNode)) {
+    for (const childType of typeNode.types) {
+      const childTypeName = getTypeNameFromTypeNode(childType);
+
+      if (
+        childTypeName &&
+        childTypeName !== "null" &&
+        childTypeName !== "undefined"
+      ) {
+        return childTypeName;
+      }
+    }
+  }
+
+  if (typeNode.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (typeNode.kind === ts.SyntaxKind.UndefinedKeyword) return "undefined";
+
+  return null;
+}
+
+function getEntityNameText(name: ts.EntityName): string {
+  if (ts.isIdentifier(name)) return name.text;
+  return name.right.text;
 }
 
 function getResolutionHintFromRawCall(
   rawCall: string,
   localVariableTypes: Map<string, string>,
+  thisPropertyTypes: Map<string, string>,
 ): Record<string, unknown> {
-  const parts = rawCall.split(".");
+  const normalizedRawCall = rawCall.replaceAll("?.", ".");
+  const parts = normalizedRawCall.split(".");
 
   if (parts.length < 2) return {};
+
+  if (parts[0] === "this" && parts.length >= 3) {
+    const propertyName = parts[1]?.replace(/!$/, "");
+    const methodName = parts.at(-1);
+
+    if (!propertyName || !methodName) return {};
+
+    const receiverType = thisPropertyTypes.get(propertyName);
+
+    if (!receiverType) return {};
+
+    return {
+      receiver: `this.${propertyName}`,
+      receiverType,
+      methodName,
+      resolvedQualifiedNameHint: `${receiverType}.${methodName}`,
+      resolutionHint: "this_property",
+    };
+  }
 
   const receiver = parts[0];
   const methodName = parts.at(-1);

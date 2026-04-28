@@ -24,6 +24,14 @@ import { findUniqueSymbolFromMatches } from "./query/find-unique-symbol.js";
 import { formatCallees } from "./query/list-callees.js";
 import { formatCallers } from "./query/list-callers.js";
 import { analyzeImpact, formatImpact } from "./query/analyze-impact.js";
+import {
+  formatSymbolContext,
+  getSymbolContext,
+} from "./query/show-context.js";
+import {
+  analyzeFileImpact,
+  formatFileImpact,
+} from "./query/analyze-file-impact.js";
 
 const program = new Command();
 
@@ -551,6 +559,115 @@ queryCommand
       });
 
       console.log(formatImpact(impact));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("context")
+  .description("Show AI-friendly context for a symbol")
+  .argument("<symbol>", "Symbol name or qualified name")
+  .option("-d, --depth <number>", "Max caller depth for affected files", "3")
+  .action((symbol: string, options: { depth?: string }) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const matches = storage.findSymbolsByName(symbol);
+      const result = findUniqueSymbolFromMatches(matches);
+
+      if (!result.ok) {
+        console.log(`Target symbol not found: ${symbol}`);
+
+        if (result.reason === "ambiguous") {
+          console.log("");
+          console.log("Multiple matches found. Use a qualified name:");
+          for (const match of result.matches) {
+            const qualifiedName =
+              typeof match.metadata?.qualifiedName === "string"
+                ? match.metadata.qualifiedName
+                : match.name;
+
+            console.log(`- ${qualifiedName} (${match.filePath ?? "unknown"})`);
+          }
+        }
+
+        process.exitCode = 1;
+        return;
+      }
+
+      const maxDepth = Number.parseInt(options.depth ?? "3", 10);
+
+      const context = getSymbolContext({
+        storage,
+        symbol: result.symbol,
+        maxDepth: Number.isFinite(maxDepth) ? maxDepth : 3,
+      });
+
+      console.log(formatSymbolContext(context));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("impact-file")
+  .description("Analyze callers affected by all symbols in a file")
+  .argument("<file>", "Target file path")
+  .option("-d, --depth <number>", "Max caller depth", "3")
+  .action((file: string, options: { depth?: string }) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const normalizedFilePath = normalizeGraphPath(file);
+      const targetFile = storage.findFileByPath(normalizedFilePath);
+
+      if (!targetFile) {
+        console.error(`File not found in graph: ${normalizedFilePath}`);
+        console.error("Run `kg index` first or check the file path.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const maxDepth = Number.parseInt(options.depth ?? "3", 10);
+
+      const impact = analyzeFileImpact({
+        storage,
+        file: targetFile,
+        maxDepth: Number.isFinite(maxDepth) ? maxDepth : 3,
+      });
+
+      console.log(formatFileImpact(impact));
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
