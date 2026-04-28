@@ -31,6 +31,13 @@ export type StoredGraphEdge = {
   metadata: Record<string, unknown> | null;
 };
 
+export type StoredRawCallWithCaller = {
+  rawCallNode: StoredGraphNode;
+  callerId: string;
+  rawCall: string;
+  line: number | null;
+};
+
 export class SqliteGraphStorage {
   private readonly db: Database.Database;
 
@@ -54,6 +61,14 @@ export class SqliteGraphStorage {
       this.clear();
       this.insertNodes(graph.nodes);
       this.insertEdges(graph.edges);
+    });
+
+    transaction();
+  }
+
+  addEdges(edges: GraphEdge[]) {
+    const transaction = this.db.transaction(() => {
+      this.insertEdges(edges);
     });
 
     transaction();
@@ -345,7 +360,7 @@ export class SqliteGraphStorage {
   findSymbolsByName(name: string): StoredGraphNode[] {
     const normalizedName = name.trim();
 
-    const rows = this.db
+    const exactRows = this.db
       .prepare(
         `
       SELECT
@@ -362,12 +377,140 @@ export class SqliteGraphStorage {
         AND (
           name = ?
           OR json_extract(metadata, '$.qualifiedName') = ?
+        )
+      ORDER BY file_path ASC, start_line ASC, name ASC
+      `,
+      )
+      .all(normalizedName, normalizedName) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    if (exactRows.length > 0) {
+      return exactRows.map((row) => ({
+        ...row,
+        metadata: row.metadata ? parseMetadata(row.metadata) : null,
+      }));
+    }
+
+    const fuzzyRows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type IN ('class', 'function', 'method', 'interface', 'type', 'callback')
+        AND (
+          name LIKE ?
           OR json_extract(metadata, '$.qualifiedName') LIKE ?
         )
       ORDER BY file_path ASC, start_line ASC, name ASC
       `,
       )
-      .all(normalizedName, normalizedName, `%${normalizedName}%`) as Array<
+      .all(`%${normalizedName}%`, `%${normalizedName}%`) as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return fuzzyRows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  findRawCallsWithCaller(): StoredRawCallWithCaller[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        rc.id,
+        rc.type,
+        rc.name,
+        rc.file_path as filePath,
+        rc.language,
+        rc.start_line as startLine,
+        rc.end_line as endLine,
+        rc.metadata,
+        e.from_id as callerId,
+        e.metadata as edgeMetadata
+      FROM nodes rc
+      JOIN edges e ON e.to_id = rc.id
+      WHERE rc.type = 'raw_call'
+        AND e.type = 'CALLS'
+      ORDER BY rc.file_path ASC, rc.start_line ASC
+      `,
+      )
+      .all() as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+        callerId: string;
+        edgeMetadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => {
+      const nodeMetadata = row.metadata ? parseMetadata(row.metadata) : null;
+      const edgeMetadata = row.edgeMetadata
+        ? parseMetadata(row.edgeMetadata)
+        : null;
+
+      const rawCall =
+        typeof nodeMetadata?.rawCall === "string"
+          ? nodeMetadata.rawCall
+          : row.name;
+
+      const line =
+        typeof edgeMetadata?.line === "number"
+          ? edgeMetadata.line
+          : row.startLine;
+
+      return {
+        rawCallNode: {
+          id: row.id,
+          type: row.type,
+          name: row.name,
+          filePath: row.filePath,
+          language: row.language,
+          startLine: row.startLine,
+          endLine: row.endLine,
+          metadata: nodeMetadata,
+        },
+        callerId: row.callerId,
+        rawCall,
+        line,
+      };
+    });
+  }
+
+  findSymbolsByExactName(name: string): StoredGraphNode[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      WHERE type IN ('class', 'function', 'method', 'interface', 'type', 'callback')
+        AND name = ?
+      ORDER BY file_path ASC, start_line ASC, name ASC
+      `,
+      )
+      .all(name) as Array<
       Omit<StoredGraphNode, "metadata"> & {
         metadata: string | null;
       }

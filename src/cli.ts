@@ -19,6 +19,10 @@ import { formatDependents } from "./query/list-dependents.js";
 import { formatSymbolDetail } from "./query/show-symbol.js";
 import { parseTypescriptCalls } from "./parser/parse-typescript-calls.js";
 import { formatRawCalls } from "./query/list-raw-calls.js";
+import { resolveSimpleCalls } from "./resolver/resolve-simple-calls.js";
+import { findUniqueSymbolFromMatches } from "./query/find-unique-symbol.js";
+import { formatCallees } from "./query/list-callees.js";
+import { formatCallers } from "./query/list-callers.js";
 
 const program = new Command();
 
@@ -100,6 +104,8 @@ program
 
       storage.saveGraph(graph);
 
+      const simpleCallResolution = resolveSimpleCalls(storage);
+
       console.log("Knowledge graph indexed successfully.");
       console.log(`Storage: ${config.storage.path}`);
       console.log(`Nodes: ${graph.nodes.length}`);
@@ -109,6 +115,10 @@ program
       console.log(`Imports: ${importEdges.length}`);
       console.log(`Raw calls: ${rawCallNodes.length}`);
       console.log(`Call edges: ${callEdges.length}`);
+      console.log(
+        `Resolved simple calls: ${simpleCallResolution.resolvedCount}`,
+      );
+      console.log(`Skipped raw calls: ${simpleCallResolution.skippedCount}`);
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
@@ -343,6 +353,142 @@ queryCommand
       const rawCalls = storage.findNodesByTypes(["raw_call"]);
 
       console.log(formatRawCalls(rawCalls));
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("callees")
+  .description("List resolved symbols called by a symbol")
+  .argument("<symbol>", "Caller symbol name or qualified name")
+  .action((symbol: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const matches = storage.findSymbolsByName(symbol);
+      const result = findUniqueSymbolFromMatches(matches);
+
+      if (!result.ok) {
+        console.log(
+          formatCallees({
+            symbolName: symbol,
+            caller: null,
+            callees: [],
+          }),
+        );
+
+        if (result.reason === "ambiguous") {
+          console.log("");
+          console.log("Multiple matches found. Use a qualified name:");
+          for (const match of result.matches) {
+            const qualifiedName =
+              typeof match.metadata?.qualifiedName === "string"
+                ? match.metadata.qualifiedName
+                : match.name;
+
+            console.log(`- ${qualifiedName} (${match.filePath ?? "unknown"})`);
+          }
+        }
+
+        process.exitCode = 1;
+        return;
+      }
+
+      const callees = storage
+        .findOutgoingNodesByEdgeType(result.symbol.id, "CALLS")
+        .filter((node) => node.type !== "raw_call");
+
+      console.log(
+        formatCallees({
+          symbolName: symbol,
+          caller: result.symbol,
+          callees,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    } finally {
+      storage?.close();
+    }
+  });
+
+queryCommand
+  .command("callers")
+  .description("List resolved symbols that call a symbol")
+  .argument("<symbol>", "Target symbol name or qualified name")
+  .action((symbol: string) => {
+    let storage: SqliteGraphStorage | null = null;
+
+    try {
+      const config = loadConfig();
+
+      storage = new SqliteGraphStorage({
+        dbPath: config.storage.path,
+      });
+
+      const matches = storage.findSymbolsByName(symbol);
+      const result = findUniqueSymbolFromMatches(matches);
+
+      if (!result.ok) {
+        console.log(
+          formatCallers({
+            symbolName: symbol,
+            target: null,
+            callers: [],
+          }),
+        );
+
+        if (result.reason === "ambiguous") {
+          console.log("");
+          console.log("Multiple matches found. Use a qualified name:");
+          for (const match of result.matches) {
+            const qualifiedName =
+              typeof match.metadata?.qualifiedName === "string"
+                ? match.metadata.qualifiedName
+                : match.name;
+
+            console.log(`- ${qualifiedName} (${match.filePath ?? "unknown"})`);
+          }
+        }
+
+        process.exitCode = 1;
+        return;
+      }
+
+      const callers = storage
+        .findIncomingNodesByEdgeType(result.symbol.id, "CALLS")
+        .filter((node) => node.type !== "raw_call");
+
+      console.log(
+        formatCallers({
+          symbolName: symbol,
+          target: result.symbol,
+          callers,
+        }),
+      );
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
