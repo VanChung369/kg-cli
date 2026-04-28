@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { initConfig } from "./config/init-config.js";
 
 const program = new Command();
 
@@ -12,8 +13,14 @@ program
 program
   .command("init")
   .description("Initialize knowledge graph config")
-  .action(() => {
-    console.log("Initializing project knowledge graph...");
+  .option("-f, --force", "Overwrite existing config file")
+  .action((options: { force?: boolean }) => {
+    const result = initConfig({
+      force: options.force ?? false,
+    });
+
+    console.log(result.message);
+    console.log(result.path);
   });
 
 program

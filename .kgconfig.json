@@ -1,0 +1,18 @@
+{
+  "projectName": "kg-cli",
+  "include": [
+    "src/**/*.{ts,tsx,js,jsx}"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    ".next/**",
+    "coverage/**",
+    ".git/**"
+  ],
+  "storage": {
+    "type": "sqlite",
+    "path": ".kg/graph.sqlite"
+  }
+}
