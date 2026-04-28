@@ -1,26 +1,21 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { watch } from "chokidar";
 import { initConfig } from "./config/init-config.js";
 import { loadConfig } from "./config/load-config.js";
-import { createContainsEdge } from "./core/create-contains-edge.js";
-import { createFileNode } from "./core/create-file-node.js";
-import { createProjectNode } from "./core/create-project-node.js";
-import type { KnowledgeGraph } from "./core/graph-types.js";
-import { parseTypescriptImports } from "./parser/parse-typescript-imports.js";
-import { parseNestjsSemantics } from "./parser/parse-nestjs-semantics.js";
-import { parseTypescriptSymbols } from "./parser/parse-typescript-symbols.js";
+import {
+  formatIndexProjectResult,
+  indexProject,
+} from "./indexer/index-project.js";
 import { formatSymbols, getSymbolNodeTypes } from "./query/list-symbols.js";
-import { scanFiles } from "./scanner/scan-files.js";
 import { SqliteGraphStorage } from "./storage/sqlite-storage.js";
 import { formatFiles, type FileSummary } from "./query/list-files.js";
 import { normalizeGraphPath } from "./core/graph-id.js";
 import { formatImports } from "./query/list-imports.js";
 import { formatDependents } from "./query/list-dependents.js";
 import { formatSymbolDetail } from "./query/show-symbol.js";
-import { parseTypescriptCalls } from "./parser/parse-typescript-calls.js";
 import { formatRawCalls } from "./query/list-raw-calls.js";
-import { resolveSimpleCalls } from "./resolver/resolve-simple-calls.js";
 import { findUniqueSymbolFromMatches } from "./query/find-unique-symbol.js";
 import { formatCallees } from "./query/list-callees.js";
 import { formatCallers } from "./query/list-callers.js";
@@ -68,87 +63,10 @@ program
   .command("index")
   .description("Index current project")
   .action(async () => {
-    let storage: SqliteGraphStorage | null = null;
-
     try {
-      const config = loadConfig();
+      const result = await indexProject();
 
-      const files = await scanFiles({
-        include: config.include,
-        exclude: config.exclude,
-      });
-
-      const projectNode = createProjectNode(config.projectName);
-      const fileNodes = files.map(createFileNode);
-
-      const symbolResults = files.map((filePath) =>
-        parseTypescriptSymbols({
-          filePath,
-        }),
-      );
-
-      const importResults = files.map((filePath) =>
-        parseTypescriptImports({
-          filePath,
-          allFiles: files,
-        }),
-      );
-
-      const callResults = files.map((filePath) =>
-        parseTypescriptCalls({
-          filePath,
-        }),
-      );
-
-      const nestjsResults = files.map((filePath) =>
-        parseNestjsSemantics({
-          filePath,
-          allFiles: files,
-        }),
-      );
-
-      const symbolNodes = symbolResults.flatMap((result) => result.nodes);
-      const symbolEdges = symbolResults.flatMap((result) => result.edges);
-      const importEdges = importResults.flatMap((result) => result.edges);
-      const rawCallNodes = callResults.flatMap((result) => result.nodes);
-      const callEdges = callResults.flatMap((result) => result.edges);
-      const nestjsEdges = nestjsResults.flatMap((result) => result.edges);
-
-      const graph: KnowledgeGraph = {
-        nodes: [projectNode, ...fileNodes, ...symbolNodes, ...rawCallNodes],
-        edges: [
-          ...fileNodes.map((fileNode) =>
-            createContainsEdge(projectNode, fileNode),
-          ),
-          ...symbolEdges,
-          ...importEdges,
-          ...callEdges,
-          ...nestjsEdges,
-        ],
-      };
-
-      storage = new SqliteGraphStorage({
-        dbPath: config.storage.path,
-      });
-
-      storage.saveGraph(graph);
-
-      const simpleCallResolution = resolveSimpleCalls(storage);
-
-      console.log("Knowledge graph indexed successfully.");
-      console.log(`Storage: ${config.storage.path}`);
-      console.log(`Nodes: ${graph.nodes.length}`);
-      console.log(`Edges: ${graph.edges.length}`);
-      console.log(`Files: ${fileNodes.length}`);
-      console.log(`Symbols: ${symbolNodes.length}`);
-      console.log(`Imports: ${importEdges.length}`);
-      console.log(`Raw calls: ${rawCallNodes.length}`);
-      console.log(`Call edges: ${callEdges.length}`);
-      console.log(`NestJS semantic edges: ${nestjsEdges.length}`);
-      console.log(
-        `Resolved simple calls: ${simpleCallResolution.resolvedCount}`,
-      );
-      console.log(`Skipped raw calls: ${simpleCallResolution.skippedCount}`);
+      console.log(formatIndexProjectResult(result));
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);
@@ -158,8 +76,118 @@ program
 
       console.error("Unknown error");
       process.exitCode = 1;
-    } finally {
-      storage?.close();
+    }
+  });
+
+program
+  .command("watch")
+  .description("Watch project files and re-index on change")
+  .option("--no-initial", "Skip the initial index run")
+  .option("-d, --debounce <ms>", "Debounce delay in milliseconds", "300")
+  .action(async (options: { initial?: boolean; debounce?: string }) => {
+    try {
+      const config = loadConfig();
+      const debounceMs = Number.parseInt(options.debounce ?? "300", 10);
+      const delay = Number.isFinite(debounceMs) ? debounceMs : 300;
+
+      let timer: NodeJS.Timeout | null = null;
+      let running = false;
+      let pending = false;
+
+      const runIndex = async (reason: string) => {
+        if (running) {
+          pending = true;
+          return;
+        }
+
+        running = true;
+        pending = false;
+
+        try {
+          console.log(`[${new Date().toISOString()}] Indexing: ${reason}`);
+          const result = await indexProject();
+          console.log(formatIndexProjectResult(result));
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(error.message);
+          } else {
+            console.error("Unknown error");
+          }
+        } finally {
+          running = false;
+
+          if (pending) {
+            scheduleIndex("pending changes");
+          }
+        }
+      };
+
+      const scheduleIndex = (reason: string) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+
+        timer = setTimeout(() => {
+          timer = null;
+          void runIndex(reason);
+        }, delay);
+      };
+
+      if (options.initial !== false) {
+        await runIndex("initial");
+      }
+
+      const watchPaths = getWatchPaths(config.include);
+
+      const watcher = watch(watchPaths, {
+        cwd: process.cwd(),
+        ignored: (filePath) =>
+          shouldIgnoreWatchPath(filePath, [...config.exclude, ".kg/**"]),
+        ignoreInitial: true,
+        persistent: true,
+      });
+
+      watcher.on("all", (eventName, filePath) => {
+        scheduleIndex(`${eventName} ${normalizeGraphPath(filePath)}`);
+      });
+
+      watcher.on("error", (error) => {
+        console.error(error instanceof Error ? error.message : String(error));
+      });
+
+      watcher.on("ready", () => {
+        console.log(`Watching for changes: ${watchPaths.join(", ")}`);
+      });
+
+      const close = async () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+
+        await watcher.close();
+      };
+
+      process.once("SIGINT", () => {
+        void close().finally(() => {
+          process.exit(0);
+        });
+      });
+
+      process.once("SIGTERM", () => {
+        void close().finally(() => {
+          process.exit(0);
+        });
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
     }
   });
 
@@ -871,4 +899,64 @@ function normalizeRoutePath(routePath: string): string {
   }
 
   return `/${normalized.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function getWatchPaths(includePatterns: string[]): string[] {
+  const paths = includePatterns.map(getStaticWatchPath);
+  const uniquePaths = Array.from(new Set(paths));
+
+  return uniquePaths.length > 0 ? uniquePaths : ["."];
+}
+
+function getStaticWatchPath(pattern: string): string {
+  const normalizedPattern = normalizeGraphPath(pattern);
+  const segments = normalizedPattern.split("/");
+  const staticSegments: string[] = [];
+
+  for (const segment of segments) {
+    if (hasGlobSyntax(segment)) break;
+    if (segment.length === 0) continue;
+
+    staticSegments.push(segment);
+  }
+
+  if (staticSegments.length === 0) {
+    return ".";
+  }
+
+  return staticSegments.join("/");
+}
+
+function hasGlobSyntax(value: string): boolean {
+  return /[*?[\]{}()!+@]/.test(value);
+}
+
+function shouldIgnoreWatchPath(filePath: string, excludePatterns: string[]) {
+  const normalizedPath = normalizeGraphPath(filePath);
+
+  return excludePatterns.some((pattern) => {
+    const staticPath = getStaticIgnorePath(pattern);
+
+    if (!staticPath || staticPath === ".") return false;
+
+    return (
+      normalizedPath === staticPath ||
+      normalizedPath.startsWith(`${staticPath}/`)
+    );
+  });
+}
+
+function getStaticIgnorePath(pattern: string): string | null {
+  const staticPath = getStaticWatchPath(pattern);
+  const normalizedPattern = normalizeGraphPath(pattern);
+
+  if (normalizedPattern === staticPath) {
+    return staticPath;
+  }
+
+  if (normalizedPattern === `${staticPath}/**`) {
+    return staticPath;
+  }
+
+  return null;
 }
