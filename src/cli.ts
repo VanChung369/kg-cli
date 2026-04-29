@@ -20,18 +20,12 @@ import { findUniqueSymbolFromMatches } from "./query/find-unique-symbol.js";
 import { formatCallees } from "./query/list-callees.js";
 import { formatCallers } from "./query/list-callers.js";
 import { analyzeImpact, formatImpact } from "./query/analyze-impact.js";
-import {
-  formatSymbolContext,
-  getSymbolContext,
-} from "./query/show-context.js";
+import { formatSymbolContext, getSymbolContext } from "./query/show-context.js";
 import {
   analyzeFileImpact,
   formatFileImpact,
 } from "./query/analyze-file-impact.js";
-import {
-  formatModuleContext,
-  getModuleContext,
-} from "./query/show-module.js";
+import { formatModuleContext, getModuleContext } from "./query/show-module.js";
 import {
   formatRouteContext,
   formatRoutes,
@@ -39,6 +33,7 @@ import {
   getRoutes,
 } from "./query/list-routes.js";
 import { startMcpServer } from "./mcp/server.js";
+import { startViewerServer } from "./viewer/server.js";
 
 const program = new Command();
 
@@ -198,6 +193,48 @@ program
   .action(() => {
     try {
       startMcpServer();
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error("Unknown error");
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("view")
+  .description("Open a 3D Three.js viewer for the indexed knowledge graph")
+  .option("-p, --port <port>", "Port to listen on", "4477")
+  .option("-h, --host <host>", "Host to bind to", "127.0.0.1")
+  .action(async (options: { port?: string; host?: string }) => {
+    try {
+      const portNumber = Number.parseInt(options.port ?? "4477", 10);
+      const port = Number.isFinite(portNumber) ? portNumber : 4477;
+      const host = options.host ?? "127.0.0.1";
+
+      const viewer = await startViewerServer({ port, host });
+
+      console.log(`Knowledge graph viewer running at ${viewer.url}`);
+      console.log("Press Ctrl+C to stop.");
+
+      const shutdown = async () => {
+        try {
+          await viewer.close();
+        } finally {
+          process.exit(0);
+        }
+      };
+
+      process.once("SIGINT", () => {
+        void shutdown();
+      });
+      process.once("SIGTERM", () => {
+        void shutdown();
+      });
     } catch (error) {
       if (error instanceof Error) {
         console.error(error.message);

@@ -522,6 +522,59 @@ export class SqliteGraphStorage {
     }));
   }
 
+  findAllNodes(): StoredGraphNode[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        type,
+        name,
+        file_path as filePath,
+        language,
+        start_line as startLine,
+        end_line as endLine,
+        metadata
+      FROM nodes
+      `,
+      )
+      .all() as Array<
+      Omit<StoredGraphNode, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
+  findAllEdges(): StoredGraphEdge[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        id,
+        from_id as fromId,
+        to_id as toId,
+        type,
+        metadata
+      FROM edges
+      `,
+      )
+      .all() as Array<
+      Omit<StoredGraphEdge, "metadata"> & {
+        metadata: string | null;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata ? parseMetadata(row.metadata) : null,
+    }));
+  }
+
   findNodeById(id: string): StoredGraphNode | null {
     const row = this.db
       .prepare(

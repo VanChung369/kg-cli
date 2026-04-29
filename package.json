@@ -17,7 +17,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-viewer-assets.mjs",
     "start": "node dist/cli.js",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",
