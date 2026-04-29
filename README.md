@@ -7,26 +7,25 @@ call edges, framework metadata, and stores everything in a local SQLite database
 The main goal is to make a codebase easier to query from the terminal and from
 AI tools through MCP.
 
-## What It Can Do
+## 🌟 Visual Demo
 
-- Index TypeScript, TSX, JavaScript, and JSX files.
-- Store the graph locally in SQLite.
-- List files, symbols, imports, dependents, callers, and callees.
-- Resolve simple function calls.
-- Resolve object method calls from local type hints:
-  - `const storage = new SqliteGraphStorage()`
-  - `storage = new SqliteGraphStorage()`
-  - `const storage: SqliteGraphStorage = createStorage()`
-- Resolve NestJS-style constructor injection:
-  - `constructor(private readonly userService: UserService) {}`
-  - `this.userService.findByEmail()` -> `UserService.findByEmail`
-- Extract NestJS metadata:
-  - `@Controller()`
-  - `@Injectable()`
-  - `@Module()`
-  - route handlers like `@Post("login")`
-- Extract Next.js App Router routes from file paths.
-- Run as an MCP server over stdio.
+Experience your codebase in a dynamic 3D space with our built-in viewer.
+
+![Knowledge Graph Viewer Demo](assets/viewer-demo.png)
+
+Run the viewer with:
+```bash
+kg view
+```
+
+## 🚀 Key Features
+
+- **3D Visualization**: Interactive Three.js-powered graph with neon aesthetics and 3D text sprites.
+- **Deep Indexing**: Extracts symbols, imports, raw calls, and resolved call edges.
+- **Framework Support**: Specialized handling for NestJS (decorators, injections) and Next.js (App Router paths).
+- **AI-Ready**: Designed to provide high-quality context for AI coding assistants via MCP (Model Context Protocol).
+- **Watch Mode**: Automatically re-indexes your project as you save files.
+
 
 ## Requirements
 
