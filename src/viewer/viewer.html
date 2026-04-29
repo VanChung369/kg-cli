@@ -1278,7 +1278,7 @@
       const Graph = ForceGraph3D({
         controlType: "orbit",
         rendererConfig: {
-          antialias: true,
+          antialias: false,
           alpha: true,
           powerPreference: "high-performance",
         },
@@ -1287,7 +1287,7 @@
         .showNavInfo(false)
         .nodeRelSize(4)
         .nodeOpacity(0.95)
-        .nodeResolution(16)
+        .nodeResolution(8)
         .nodeThreeObjectExtend(true)
         .nodeThreeObject((node) => buildNodeLabel(node))
         .nodeVal((node) => {
@@ -1319,10 +1319,10 @@
           return getLinkColor(link.type);
         })
         .linkCurvature((link) =>
-          state.neighborLinks.has(link) ? link.focusCurvature : link.curvature,
+          state.neighborLinks.has(link) ? link.focusCurvature : 0,
         )
         .linkCurveRotation((link) => link.curveRotation || 0)
-        .linkResolution(6)
+        .linkResolution(4)
         .linkDirectionalArrowLength((link) =>
           state.neighborLinks.has(link) ? 5 : 0,
         )
@@ -1373,7 +1373,7 @@
       try {
         const renderer = Graph.renderer();
         if (renderer) {
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
         }
       } catch {}
 
@@ -1408,6 +1408,14 @@
             .map((node) => node.id),
         );
         el.degree.max = String(Math.min(60, degrees[0] || 20));
+        
+        if (nodes.length > 800) {
+          state.minDegree = 1;
+        }
+        if (nodes.length > 2500) {
+          state.minDegree = 2;
+        }
+        
         el.nodeCount.textContent = formatNumber(nodes.length);
         el.edgeCount.textContent = formatNumber(links.length);
         el.summary.textContent =
