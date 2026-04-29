@@ -108,6 +108,19 @@ const TOOLS: McpTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "search_symbols",
+    description: "Search for symbols by name or partial name (fuzzy search). Use this to find the exact name of a symbol before calling other tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        limit: { type: "number", default: 10 },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type McpServerOptions = {
@@ -339,6 +352,20 @@ function runTool(params: {
 
       case "get_route_context":
         return getMcpRouteContext(storage, params.arguments);
+
+      case "search_symbols": {
+        const query = requireString(params.arguments, "query");
+        let limit = 10;
+        if (typeof params.arguments.limit === "number") {
+          limit = Math.max(1, Math.min(50, Math.floor(params.arguments.limit)));
+        }
+        const matches = storage.findSymbolsByName(query);
+        return {
+          query,
+          count: matches.length,
+          matches: matches.slice(0, limit).map(toNodeSummary),
+        };
+      }
 
       default:
         throw new Error(`Unknown tool: ${params.name}`);

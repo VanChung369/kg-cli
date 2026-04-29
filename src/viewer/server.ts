@@ -131,6 +131,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
 
   if (url.pathname === "/source") {
     const filePath = url.searchParams.get("path");
+    const startParam = url.searchParams.get("start");
+    const endParam = url.searchParams.get("end");
+    
     if (!filePath) {
       sendError(res, 400, "Missing path parameter");
       return;
@@ -143,7 +146,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     }
 
     try {
-      const content = readFileSync(safePath, { encoding: "utf8" });
+      let content = readFileSync(safePath, { encoding: "utf8" });
+      
+      if (startParam && endParam) {
+        const startLine = parseInt(startParam, 10);
+        const endLine = parseInt(endParam, 10);
+        if (!Number.isNaN(startLine) && !Number.isNaN(endLine) && startLine <= endLine) {
+          const lines = content.split('\n');
+          const contextStart = Math.max(0, startLine - 1 - 5);
+          const contextEnd = Math.min(lines.length, endLine + 5);
+          content = lines.slice(contextStart, contextEnd).join('\n');
+        }
+      }
+
       if (Buffer.byteLength(content, "utf8") > MAX_SOURCE_BYTES) {
         sendError(res, 413, "File too large");
         return;
