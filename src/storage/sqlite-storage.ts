@@ -172,7 +172,26 @@ export class SqliteGraphStorage {
       )
     `);
 
+    const existsStmt = this.db.prepare(
+      "SELECT 1 FROM nodes WHERE id = ? LIMIT 1",
+    );
+    const knownIds = new Set<string>();
+    const hasNode = (id: string): boolean => {
+      if (knownIds.has(id)) return true;
+      const row = existsStmt.get(id) as { 1: number } | undefined;
+      if (row) {
+        knownIds.add(id);
+        return true;
+      }
+      return false;
+    };
+
+    let skipped = 0;
     for (const edge of dedupeById(edges)) {
+      if (!hasNode(edge.fromId) || !hasNode(edge.toId)) {
+        skipped += 1;
+        continue;
+      }
       stmt.run({
         id: edge.id,
         fromId: edge.fromId,
@@ -180,6 +199,12 @@ export class SqliteGraphStorage {
         type: edge.type,
         metadata: edge.metadata ? JSON.stringify(edge.metadata) : null,
       });
+    }
+
+    if (skipped > 0) {
+      console.warn(
+        `[kg] Skipped ${skipped} edge(s) referencing unknown node ids.`,
+      );
     }
   }
 

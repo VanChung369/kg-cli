@@ -3,9 +3,27 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath, extname, sep } from "node:path";
 import { loadConfig } from "../config/load-config.js";
 import { SqliteGraphStorage } from "../storage/sqlite-storage.js";
+
+const SOURCE_ALLOWED_EXTS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".md",
+  ".vue",
+  ".svelte",
+  ".html",
+  ".css",
+  ".scss",
+]);
+const MAX_SOURCE_BYTES = 1024 * 1024; // 1 MB
 
 export type StartViewerOptions = {
   port?: number;
@@ -117,14 +135,26 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       sendError(res, 400, "Missing path parameter");
       return;
     }
+
+    const safePath = resolveSafeSourcePath(filePath);
+    if (!safePath) {
+      sendError(res, 403, "Path is outside project root or not allowed");
+      return;
+    }
+
     try {
-      const content = readFileSync(filePath, { encoding: "utf8" });
+      const content = readFileSync(safePath, { encoding: "utf8" });
+      if (Buffer.byteLength(content, "utf8") > MAX_SOURCE_BYTES) {
+        sendError(res, 413, "File too large");
+        return;
+      }
       res.writeHead(200, {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
       });
       res.end(content);
-    } catch (err: any) {
+    } catch {
       sendError(res, 404, "File not found or unreadable");
     }
     return;
@@ -174,4 +204,42 @@ function buildGraphPayload() {
 function sendError(res: ServerResponse, status: number, message: string) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({ error: message }));
+}
+
+function resolveSafeSourcePath(rawPath: string): string | null {
+  if (!rawPath) return null;
+  // Reject NUL bytes and obviously suspicious sequences early.
+  if (rawPath.includes("\0")) return null;
+
+  const ext = extname(rawPath).toLowerCase();
+  if (ext && !SOURCE_ALLOWED_EXTS.has(ext)) return null;
+
+  const projectRoot = (() => {
+    try {
+      return realpathSync(process.cwd());
+    } catch {
+      return resolvePath(process.cwd());
+    }
+  })();
+
+  const candidate = isAbsolute(rawPath)
+    ? rawPath
+    : resolvePath(projectRoot, rawPath);
+
+  let resolved: string;
+  try {
+    resolved = realpathSync(candidate);
+  } catch {
+    // Fall back to lexical resolution so we still reject path traversal
+    // even if file does not exist.
+    resolved = resolvePath(candidate);
+  }
+
+  const rootWithSep = projectRoot.endsWith(sep)
+    ? projectRoot
+    : projectRoot + sep;
+  if (resolved !== projectRoot && !resolved.startsWith(rootWithSep)) {
+    return null;
+  }
+  return resolved;
 }
